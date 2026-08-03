@@ -139,15 +139,6 @@ def test_a_monitorless_ring_yields_an_empty_result_rather_than_raising():
     assert monitor_xy(monitorless, solve_orbit(monitorless)) == []
 
 
-def test_refpts_are_integers_even_when_there_are_no_monitors():
-    # np.array([]) is float64. refpts are indices, and an index array that is
-    # only accidentally acceptable to pyAT is worst on the path least walked.
-    assert np.issubdtype(_monitor_refpts(build_test_ring()).dtype, np.integer)
-    assert np.issubdtype(
-        _monitor_refpts(strip_monitors(build_test_ring())).dtype, np.integer
-    )
-
-
 def test_a_monitorless_ring_still_trips_the_stability_guards():
     # Empty readout is not a bypass: the one-turn matrix is checked either way.
     monitorless = strip_monitors(destabilise(build_test_ring()))

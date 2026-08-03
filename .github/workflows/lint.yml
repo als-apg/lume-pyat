@@ -45,15 +45,19 @@ jobs:
           fetch-depth: 1
 
       - name: Check for facility-specific references
-        # Explicit separators rather than \b, on both sides: an underscore is
-        # a word character, so \b never fires inside an identifier -- the
-        # exact shape a real leak takes. The bracket classes deliberately
-        # exclude _, which is what makes an underscore count as a separator.
-        # Verified to catch x_alsu_y, sr_alsu_bpm, foo_als_bar and the
-        # hyphenated form, and to leave salsa, alsatian, false, signals and
-        # intervals_used alone.
+        # A leading separator rather than \b: an underscore is a word
+        # character, so \b never fires inside an identifier -- the exact shape
+        # a real leak takes. The bracket classes deliberately exclude _, which
+        # is what makes an underscore count as a separator.
+        #
+        # The trailing separator is required only of the bare-token branch.
+        # Demanding it of the full form too would miss a run-together
+        # identifier, which is a plausible leak and not a word anyone writes
+        # by accident; leaving it off the bare token is what keeps intervals_
+        # used, normals_used, totals, signals, false, also, salsa and alsatian
+        # from tripping the gate.
         run: |
-          if grep -rinE '(^|[^a-zA-Z0-9])(als[-_]?u|als|osprey)([^a-zA-Z0-9]|$)' lume_pyat/; then
+          if grep -rinE '(^|[^a-zA-Z0-9])(als[-_]?u|(als|osprey)([^a-zA-Z0-9]|$))' lume_pyat/; then
             echo "::error::facility-specific reference found in lume_pyat/"
             exit 1
           fi
