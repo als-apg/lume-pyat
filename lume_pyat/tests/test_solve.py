@@ -8,7 +8,7 @@ import pytest
 
 from lume_pyat.exceptions import OrbitSolveError
 from lume_pyat.solve import _monitor_refpts, monitor_xy, solve_orbit
-from lume_pyat.tests.conftest import N_CELLS, build_test_ring
+from lume_pyat.tests.conftest import N_CELLS, build_test_ring, strip_monitors
 
 
 def destabilise(ring: at.Lattice) -> at.Lattice:
@@ -132,30 +132,25 @@ def test_a_monitorless_ring_yields_an_empty_result_rather_than_raising():
     # the guards still run and the readout is simply empty. A caller that does
     # expect readings learns so precisely, at model construction -- see the
     # non-monitor binding test in test_model.py.
-    ring = build_test_ring()
-    monitorless = at.Lattice(
-        [element for element in ring if not isinstance(element, at.Monitor)],
-        name="NO_MONITORS",
-        energy=ring.energy,
-        periodicity=1,
-    )
-    monitorless.disable_6d()
+    monitorless = strip_monitors(build_test_ring())
 
     assert len(_monitor_refpts(monitorless)) == 0
     assert solve_orbit(monitorless).shape == (0, 6)
     assert monitor_xy(monitorless, solve_orbit(monitorless)) == []
 
 
+def test_refpts_are_integers_even_when_there_are_no_monitors():
+    # np.array([]) is float64. refpts are indices, and an index array that is
+    # only accidentally acceptable to pyAT is worst on the path least walked.
+    assert np.issubdtype(_monitor_refpts(build_test_ring()).dtype, np.integer)
+    assert np.issubdtype(
+        _monitor_refpts(strip_monitors(build_test_ring())).dtype, np.integer
+    )
+
+
 def test_a_monitorless_ring_still_trips_the_stability_guards():
     # Empty readout is not a bypass: the one-turn matrix is checked either way.
-    ring = destabilise(build_test_ring())
-    monitorless = at.Lattice(
-        [element for element in ring if not isinstance(element, at.Monitor)],
-        name="NO_MONITORS",
-        energy=ring.energy,
-        periodicity=1,
-    )
-    monitorless.disable_6d()
+    monitorless = strip_monitors(destabilise(build_test_ring()))
 
     with pytest.raises(OrbitSolveError, match="one-turn matrix unstable"):
         solve_orbit(monitorless)

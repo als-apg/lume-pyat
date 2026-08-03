@@ -10,6 +10,11 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+    env:
+      # Every uv call in this job resolves the matrix interpreter, rather than
+      # whichever one discovery happens to land on. Set at the job level so a
+      # step added later inherits the pin instead of quietly opting out of it.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,24 +30,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies and package
-        # --python pins the interpreter explicitly. Without it uv picks one by
-        # discovery, which happens to find the matrix version on PATH today
-        # but is not guaranteed to -- and if it ever stopped, every job would
-        # silently test the same interpreter and stay green.
         run: |
-          uv sync --extra dev --no-editable --python "${{ matrix.python-version }}"
+          uv sync --extra dev --no-editable
       - name: Confirm the interpreter matches the matrix
-        # The pin above only requests a version; this proves we got it, so a
-        # degraded matrix fails loudly instead of passing four times over.
+        # UV_PYTHON only requests a version; this proves we got it. Without it
+        # a matrix that degraded to one interpreter would test the same leg
+        # four times over and stay green.
         env:
           EXPECTED: ${{ matrix.python-version }}
         run: |
           uv run --no-sync python -c "
           import os, sys
+          print(sys.version)
           expected = os.environ['EXPECTED']
           actual = '.'.join(map(str, sys.version_info[:2]))
           assert actual == expected, f'expected Python {expected}, got {actual}'
-          print(f'running on Python {sys.version.split()[0]}')
           "
       - name: List Python package versions
         run: uv pip list

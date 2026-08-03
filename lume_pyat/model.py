@@ -28,10 +28,11 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
     multi-variable write either lands completely or not at all. Every element
     the batch will touch is snapshotted first; the whole batch is applied; the
     orbit is solved **once**; and only then are the retained inputs and cached
-    outputs committed. If anything fails — an unstable orbit, a bad attribute,
-    anything at all — every snapshot is restored and the model is left exactly
-    as it was. A half-applied write is a machine state nobody asked for and
-    nobody can reason about.
+    outputs committed. If anything fails — an unstable orbit, a conversion
+    raising inside a subclassed variable, anything at all — every snapshot is
+    restored, the simulator's cached solve is put back, and the model is left
+    exactly as it was. A half-applied write is a machine state nobody asked
+    for and nobody can reason about.
 
     Reads are served from cache: writables from the value retained at their
     last successful write, so get-after-set is bit-exact rather than a
@@ -73,6 +74,12 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
         differs from its declared defaults should :meth:`reset` afterwards to
         reconcile the two.
 
+        Every binding is checked here, before anything is written: the element
+        name must reach exactly one element, and a declared attribute must be
+        one that element already has. Both are mistakes in the *definition* of
+        a variable, so they belong at the point the variable set is adopted
+        rather than at the first write that happens to touch it.
+
         Args:
             simulator: The simulator to drive. Its lattice is mutated in place.
             action_variables: The variables this model exposes. Each must bind
@@ -82,6 +89,14 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
         Raises:
             UnknownElementError: a variable binds an element the lattice does
                 not have. Raised before anything is written.
+            AmbiguousElementError: a variable binds a name more than one
+                element carries, so the binding addresses neither.
+            AttributeError: a variable declares an attribute its element does
+                not have — typically a typo. pyAT elements accept arbitrary
+                attribute assignment, so left to the write path this would
+                land on a dead field, be ignored by the solve, and read back
+                intact: a silent no-op write.
+            TypeError: a variable binds no lattice element at all.
             OrbitSolveError: the lattice as handed over has no stable closed
                 orbit.
         """
@@ -97,17 +112,11 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
             self._action_variable_by_name
         )
 
-        # Fail fast, before any write: a variable pointing at an element the
-        # lattice does not have is a construction-time mistake, and finding it
-        # at the first write instead would leave the caller guessing.
+        # Fail fast, before any write: a variable whose binding does not
+        # resolve is a construction-time mistake, and finding it at the first
+        # write instead would leave the caller guessing.
         for name, variable in self._supported_variables.items():
-            element_name = getattr(variable, "element_name", None)
-            if element_name is None:
-                raise TypeError(
-                    f"variable {name!r} binds no lattice element; "
-                    "this model takes pyAT action variables"
-                )
-            simulator.element_index(element_name)
+            self._validate_binding(name, variable)
 
         self._inputs: dict[str, float] = self._declared_defaults()
         simulator.solve()
@@ -166,9 +175,10 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
             UnknownElementError: a name is not a variable of this model, or is
                 not one of its settable inputs.
             OrbitSolveError: the combined write leaves the lattice without a
-                stable closed orbit. Every mutated element is restored and
-                neither the retained inputs nor the cached outputs are touched,
-                so a rejected write is a complete no-op.
+                stable closed orbit. Every mutated element is restored, the
+                simulator's cached solve is put back, and neither the retained
+                inputs nor the cached outputs are touched, so a rejected write
+                is a complete no-op.
         """
         # Validate before dispatching. The base _set silently skips anything
         # that is not writable, so a direct write to a read-only variable would
@@ -177,12 +187,19 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
         variables = [self._require_settable(name) for name in values]
 
         snapshots = self._snapshot(variables)
+        # The solve is captured alongside the lattice because it can outlive a
+        # failure: solve() may succeed and replace the simulator's cached
+        # reading, only for _read_outputs to fail after it. Restoring the
+        # lattice alone would then leave that cache describing an orbit the
+        # lattice no longer has.
+        solution = self.simulator.snapshot_solution()
         try:
             super()._set(values)
             self.simulator.solve()
             outputs = self._read_outputs()
         except Exception:
             self._restore(snapshots)
+            self.simulator.restore_solution(solution)
             raise
 
         # Commit only now: a partially applied write must never be visible.
@@ -235,6 +252,26 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
         return super().unregister_action_variable(name)
 
     # -- internals ---------------------------------------------------------
+
+    def _validate_binding(self, name: str, variable: Variable) -> None:
+        """Check one variable's binding against the lattice. See __init__."""
+        element_name = getattr(variable, "element_name", None)
+        if element_name is None:
+            raise TypeError(
+                f"variable {name!r} binds no lattice element; "
+                "this model takes pyAT action variables"
+            )
+        index = self.simulator.unique_element_index(element_name)
+
+        # Read-only variables name a monitor and no attribute; there is
+        # nothing to check for them here, and the boot solve catches a
+        # non-monitor.
+        attribute = getattr(variable, "attribute", None)
+        if attribute is not None and not hasattr(self.lattice[index], attribute):
+            raise AttributeError(
+                f"variable {name!r} declares attribute {attribute!r}, which "
+                f"element {element_name!r} does not have"
+            )
 
     def _declared_defaults(self) -> dict[str, float]:
         return {

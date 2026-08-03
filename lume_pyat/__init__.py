@@ -13,7 +13,11 @@ if TYPE_CHECKING:  # pragma: no cover - import shapes for type checkers only
         PyATReadOnlyScalarVariable,
         PyATWritableScalarVariable,
     )
-    from lume_pyat.exceptions import OrbitSolveError, UnknownElementError
+    from lume_pyat.exceptions import (
+        AmbiguousElementError,
+        OrbitSolveError,
+        UnknownElementError,
+    )
     from lume_pyat.model import LUMEPyATModel
     from lume_pyat.simulator import (
         ElementState,
@@ -25,6 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover - import shapes for type checkers only
     from lume_pyat.utils import apply_misalignment
 
 _LAZY_NAMES = {
+    "AmbiguousElementError": "lume_pyat.exceptions",
     "ElementState": "lume_pyat.simulator",
     "LUMEPyATModel": "lume_pyat.model",
     "OrbitSolveError": "lume_pyat.exceptions",
@@ -42,6 +47,7 @@ _LAZY_NAMES = {
 # Kept as a literal so linters and type checkers can see the public surface
 # even though every name behind it is resolved lazily.
 __all__ = [
+    "AmbiguousElementError",
     "ElementState",
     "LUMEPyATModel",
     "OrbitSolveError",

@@ -49,3 +49,18 @@ class UnknownElementError(ValueError):
     def for_name(cls, name: str) -> UnknownElementError:
         """Build the error for a lattice-element lookup that found nothing."""
         return cls(f"no lattice element named {name!r}")
+
+
+class AmbiguousElementError(UnknownElementError):
+    """Raised when a name resolves to more than one element of the lattice.
+
+    Element addressing is by ``FamName``, so a name carried by two elements
+    picks out neither of them. Duplicates are only a problem for the names a
+    caller actually addresses — a lattice may hold any number of identically
+    named drifts — so this is raised where an addressable name is established,
+    never merely because a name repeats.
+
+    Derives from :class:`UnknownElementError` because it is the same failure
+    from the caller's side: the name cannot be used to reach an element, and a
+    consumer that already catches unresolvable names keeps catching this one.
+    """

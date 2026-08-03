@@ -138,7 +138,9 @@ def test_a_writable_rejects_an_unknown_element(simulator):
 
 def test_a_writable_rejects_an_attribute_the_element_does_not_have(simulator):
     # pyAT elements accept arbitrary assignment, so an unguarded write to a
-    # misspelled attribute would be a silent no-op the solve ignores.
+    # misspelled attribute would be a silent no-op the solve ignores. Driven
+    # through a model the same mistake is caught at construction; this is the
+    # backstop for a variable driven against a simulator directly.
     variable = writable(attribute="Kk")
     with pytest.raises(AttributeError, match="has no attribute 'Kk'"):
         variable._set(simulator, 1.0)

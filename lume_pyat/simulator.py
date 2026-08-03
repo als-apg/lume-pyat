@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 import at
 import numpy as np
 
-from lume_pyat.exceptions import OrbitSolveError, UnknownElementError
+from lume_pyat.exceptions import (
+    AmbiguousElementError,
+    OrbitSolveError,
+    UnknownElementError,
+)
 from lume_pyat.solve import monitor_xy, solve_orbit
 from lume_pyat.utils import apply_misalignment
 
@@ -67,10 +72,15 @@ class PyATSimulator:
     own reference sees the same mutations. That is intended — it is how a
     caller applies its own strength changes before calling :meth:`solve`.
 
-    Element lookup is by ``FamName``. A lattice with duplicate names resolves
-    each to its last occurrence, and :meth:`solve` likewise returns one entry
-    per distinct monitor name, so monitor names should be unique if every
-    monitor is to be readable.
+    Element lookup is by ``FamName``, so a name is only usable as an address
+    if exactly one element carries it. Duplicates are legal in general — a
+    lattice may hold any number of identically named drifts, and
+    :meth:`element_index` resolves such a name to its last occurrence — but
+    they are rejected wherever a name has to address something. Monitor names
+    are checked here, at construction, because :meth:`solve` keys its readings
+    by ``FamName`` and two monitors sharing one would silently return a single
+    reading for both. Names bound by action variables are checked through
+    :meth:`unique_element_index`.
     """
 
     def __init__(
@@ -93,6 +103,8 @@ class PyATSimulator:
                 retrying with corrected arguments.
 
         Raises:
+            AmbiguousElementError: two monitors share a ``FamName``, which
+                would make :meth:`solve` return one reading for both.
             UnknownElementError: a misalignment names an element the lattice
                 does not have. Nothing has been mutated when this is raised.
         """
@@ -100,7 +112,22 @@ class PyATSimulator:
         self._index_by_famname: dict[str, int] = {
             element.FamName: index for index, element in enumerate(lattice)
         }
+        self._famname_counts = Counter(element.FamName for element in lattice)
         self._last_solution: dict[str, tuple[float, float]] | None = None
+
+        # Before anything is mutated: a monitor that cannot be told apart from
+        # another is not readable, and finding that out at the first solve --
+        # as a reading quietly missing from the result -- would be far worse
+        # than finding it out here.
+        monitor_counts = Counter(
+            element.FamName for element in lattice if isinstance(element, at.Monitor)
+        )
+        duplicated = sorted(name for name, count in monitor_counts.items() if count > 1)
+        if duplicated:
+            raise AmbiguousElementError(
+                "monitor names must be unique for their readings to be "
+                f"addressable; the lattice repeats {', '.join(map(repr, duplicated))}"
+            )
 
         misalignments = element_misalignments or {}
         for fam_name in misalignments:
@@ -140,6 +167,27 @@ class PyATSimulator:
             raise UnknownElementError.for_name(fam_name)
         return index
 
+    def unique_element_index(self, fam_name: str) -> int:
+        """Index of the *sole* element named ``fam_name``.
+
+        The lookup to use when a name is being adopted as an address — a
+        variable binding, say — rather than resolved once. :meth:`element_index`
+        answers "where does this name lead"; this answers "does this name lead
+        somewhere unambiguous", and the two differ only for a repeated name.
+
+        Raises:
+            UnknownElementError: no element carries that name.
+            AmbiguousElementError: more than one does.
+        """
+        index = self.element_index(fam_name)
+        count = self._famname_counts[fam_name]
+        if count > 1:
+            raise AmbiguousElementError(
+                f"{count} lattice elements are named {fam_name!r}; a name used "
+                "to address an element must belong to exactly one"
+            )
+        return index
+
     def element(self, fam_name: str) -> at.Element:
         """The element named ``fam_name``, for direct attribute access.
 
@@ -148,6 +196,26 @@ class PyATSimulator:
         """
         return self._lattice[self.element_index(fam_name)]
 
+    def snapshot_solution(self) -> dict[str, tuple[float, float]] | None:
+        """The cached solve result, or ``None`` when none has succeeded yet.
+
+        The read half of a solve-rollback, and the reason it exists rather
+        than callers using :attr:`last_solution`: this never raises, so a
+        caller can capture and later restore "nothing solved yet" as
+        faithfully as it restores a reading. Pair with
+        :meth:`restore_solution`.
+        """
+        return self._last_solution
+
+    def restore_solution(self, snapshot: dict[str, tuple[float, float]] | None) -> None:
+        """Put a :meth:`snapshot_solution` result back as the cached solve.
+
+        For a caller undoing a write it has already solved on: restoring the
+        lattice alone would leave :attr:`last_solution` describing an orbit
+        the lattice no longer has.
+        """
+        self._last_solution = snapshot
+
     def solve(self) -> dict[str, tuple[float, float]]:
         """Solve the closed orbit once and read it out at every monitor.
 
@@ -155,6 +223,12 @@ class PyATSimulator:
         failure it is left alone: a failed solve says nothing about the orbit
         that was there before it, so the previous reading remains the best
         available answer rather than being discarded.
+
+        A ring with no monitors solves to an empty reading rather than an
+        error. The stability guards still run — an empty result means "nothing
+        to read here", never "nothing was checked" — and a caller that does
+        expect readings finds out at model construction instead. See
+        :func:`~lume_pyat.solve.solve_orbit`.
 
         Returns:
             ``FamName`` -> ``(x, y)`` in meters, one entry per monitor.

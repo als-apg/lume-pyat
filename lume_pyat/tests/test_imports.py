@@ -47,7 +47,7 @@ def test_importing_the_exceptions_module_is_standard_library_only():
 
 @pytest.mark.parametrize(
     "name",
-    ["OrbitSolveError", "UnknownElementError"],
+    ["AmbiguousElementError", "OrbitSolveError", "UnknownElementError"],
 )
 def test_reaching_an_exception_through_the_package_stays_cheap(name):
     # The lazy top-level namespace must resolve these without waking anything

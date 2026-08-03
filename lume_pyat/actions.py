@@ -77,7 +77,18 @@ class PyATWritableScalarVariable(WritableActionMixin[PyATSimulator], ScalarVaria
         return float(value)
 
     def _set(self, simulator: PyATSimulator, value: float) -> None:
-        """Write the bound attribute, in native pyAT units."""
+        """Write the bound attribute, in native pyAT units.
+
+        Raises
+        ------
+        AttributeError
+            The element has no such attribute. A variable used through
+            :class:`~lume_pyat.model.LUMEPyATModel` cannot reach this: the
+            model checks the same condition when it adopts the variable, so
+            the mistake surfaces at construction. This is the backstop for a
+            variable driven against a simulator directly, where there is no
+            construction step to catch it.
+        """
         element = simulator.element(self.element_name)
         if not hasattr(element, self.attribute):
             # pyAT elements accept arbitrary attribute assignment, so a typo

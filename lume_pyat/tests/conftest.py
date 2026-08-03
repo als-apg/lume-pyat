@@ -51,6 +51,22 @@ def build_test_ring() -> at.Lattice:
     return ring
 
 
+def strip_monitors(ring: at.Lattice) -> at.Lattice:
+    """The same ring with every ``at.Monitor`` removed.
+
+    For the monitorless contract: a ring with no monitors solves to an empty
+    reading rather than raising, and this is how the tests build one.
+    """
+    monitorless = at.Lattice(
+        [element for element in ring if not isinstance(element, at.Monitor)],
+        name="NO_MONITORS",
+        energy=ring.energy,
+        periodicity=1,
+    )
+    monitorless.disable_6d()
+    return monitorless
+
+
 @pytest.fixture
 def test_ring() -> at.Lattice:
     """A fresh :func:`build_test_ring` lattice per test."""

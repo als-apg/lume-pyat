@@ -6,14 +6,18 @@ import at
 import numpy as np
 import pytest
 
-from lume_pyat.exceptions import OrbitSolveError, UnknownElementError
+from lume_pyat.exceptions import (
+    AmbiguousElementError,
+    OrbitSolveError,
+    UnknownElementError,
+)
 from lume_pyat.simulator import (
     ElementState,
     PyATSimulator,
     restore_element,
     snapshot_element,
 )
-from lume_pyat.tests.conftest import N_CELLS, QUAD_K
+from lume_pyat.tests.conftest import N_CELLS, QUAD_K, strip_monitors
 
 
 @pytest.fixture
@@ -49,6 +53,68 @@ def test_element_returns_the_live_element(simulator):
 def test_element_rejects_an_unknown_name(simulator):
     with pytest.raises(UnknownElementError, match="no lattice element named 'NOPE'"):
         simulator.element("NOPE")
+
+
+# -- addressable names -----------------------------------------------------
+
+
+def test_duplicate_names_are_legal_for_elements_nobody_addresses(test_ring):
+    # Every drift in the ring is named DRIFT. Rejecting that would mean
+    # rejecting most real lattices; what matters is only whether a name is
+    # being used as an address.
+    assert sum(element.FamName == "DRIFT" for element in test_ring) > 1
+    simulator = PyATSimulator(test_ring)
+
+    # Resolved, not rejected -- element_index answers "where does this lead".
+    assert test_ring[simulator.element_index("DRIFT")].FamName == "DRIFT"
+
+
+def test_unique_element_index_accepts_a_name_only_one_element_carries(simulator):
+    assert simulator.unique_element_index("QUAD_F_01") == simulator.element_index(
+        "QUAD_F_01"
+    )
+
+
+def test_unique_element_index_rejects_a_repeated_name(simulator):
+    drifts = sum(element.FamName == "DRIFT" for element in simulator.lattice)
+    with pytest.raises(
+        AmbiguousElementError, match=f"{drifts} lattice elements are named 'DRIFT'"
+    ):
+        simulator.unique_element_index("DRIFT")
+
+
+def test_unique_element_index_still_rejects_an_unknown_name(simulator):
+    with pytest.raises(UnknownElementError, match="no lattice element named 'NOPE'"):
+        simulator.unique_element_index("NOPE")
+
+
+def test_duplicate_monitor_names_are_rejected_at_construction(test_ring):
+    # solve() keys its readings by FamName, so two monitors sharing one would
+    # yield a single reading and silently lose the other.
+    test_ring[test_ring.get_uint32_index("BPM_04")[0]].FamName = "BPM_01"
+
+    with pytest.raises(AmbiguousElementError, match="monitor names must be unique"):
+        PyATSimulator(test_ring)
+
+
+def test_the_duplicate_monitor_error_names_the_offenders(test_ring):
+    test_ring[test_ring.get_uint32_index("BPM_04")[0]].FamName = "BPM_01"
+    test_ring[test_ring.get_uint32_index("BPM_06")[0]].FamName = "BPM_02"
+
+    with pytest.raises(AmbiguousElementError) as excinfo:
+        PyATSimulator(test_ring)
+    assert "'BPM_01', 'BPM_02'" in str(excinfo.value)
+
+
+def test_a_monitor_may_share_a_name_with_a_non_monitor(test_ring):
+    # Only monitor-to-monitor collisions break a reading. This one is caught
+    # instead by whatever tries to address the name -- see
+    # test_unique_element_index_rejects_a_repeated_name.
+    test_ring[test_ring.get_uint32_index("BPM_04")[0]].FamName = "DRIFT"
+
+    solution = PyATSimulator(test_ring).solve()
+    assert len(solution) == N_CELLS
+    assert "DRIFT" in solution
 
 
 # -- lattice ownership -----------------------------------------------------
@@ -200,6 +266,41 @@ def test_a_failed_solve_leaves_the_previous_solution_in_place(simulator):
         simulator.solve()
 
     assert simulator.last_solution == good
+
+
+def test_a_monitorless_ring_solves_to_an_empty_reading(test_ring):
+    # The contract, at the simulator's own surface: no monitors is not an
+    # error, it is nothing to read. The guards below prove it is not a bypass.
+    simulator = PyATSimulator(strip_monitors(test_ring))
+
+    assert simulator.solve() == {}
+    assert simulator.last_solution == {}
+
+    destabilise(simulator.lattice)
+    with pytest.raises(OrbitSolveError, match="one-turn matrix unstable"):
+        simulator.solve()
+
+
+def test_snapshot_and_restore_round_trip_a_solution(simulator):
+    good = simulator.solve()
+    snapshot = simulator.snapshot_solution()
+
+    simulator.element("COR_H_03").KickAngle = [1e-4, 0.0]
+    assert simulator.solve() != good
+
+    simulator.restore_solution(snapshot)
+    assert simulator.last_solution == good
+
+
+def test_snapshotting_before_any_solve_yields_none(simulator):
+    # Why this is not just last_solution: a caller rolling back has to be able
+    # to restore "nothing solved yet", which last_solution can only raise for.
+    assert simulator.snapshot_solution() is None
+
+    simulator.solve()
+    simulator.restore_solution(None)
+    with pytest.raises(OrbitSolveError, match="no closed orbit has been solved yet"):
+        _ = simulator.last_solution
 
 
 def test_a_first_failed_solve_leaves_last_solution_unset(simulator):

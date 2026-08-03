@@ -41,9 +41,15 @@ def _monitor_refpts(ring: at.Lattice) -> np.ndarray:
     A ring carrying no `at.Monitor` yields an empty array, and the functions
     below then yield an empty result rather than raising -- see
     :func:`solve_orbit` for why that is the contract.
+
+    The dtype is integer unconditionally: `np.array([])` would otherwise be
+    float, and refpts handed to pyAT as floats are an index type that happens
+    to work rather than one that is meant to, on exactly the empty-ring path
+    that gets exercised least.
     """
     return np.array(
-        [i for i, element in enumerate(ring) if isinstance(element, at.Monitor)]
+        [i for i, element in enumerate(ring) if isinstance(element, at.Monitor)],
+        dtype=int,
     )
 
 

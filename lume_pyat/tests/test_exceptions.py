@@ -6,7 +6,11 @@ import sys
 import pytest
 
 import lume_pyat
-from lume_pyat.exceptions import OrbitSolveError, UnknownElementError
+from lume_pyat.exceptions import (
+    AmbiguousElementError,
+    OrbitSolveError,
+    UnknownElementError,
+)
 
 # Stricter than the package-level guarantee: this module must not reach numpy
 # either, so consumers can re-export it from anywhere.
@@ -41,6 +45,15 @@ def test_unknown_element_error_is_a_value_error():
         raise UnknownElementError("anything")
 
 
+def test_an_ambiguous_name_is_caught_by_an_unknown_element_handler():
+    # A name carried by two elements and a name carried by none are the same
+    # failure from the caller's side -- neither can reach an element -- so a
+    # consumer that already catches one keeps catching the other.
+    assert issubclass(AmbiguousElementError, UnknownElementError)
+    with pytest.raises(UnknownElementError):
+        raise AmbiguousElementError("anything")
+
+
 def test_for_name_produces_the_contract_message():
     error = UnknownElementError.for_name("QUAD_F_01")
     assert str(error) == "no lattice element named 'QUAD_F_01'"
@@ -67,3 +80,4 @@ def test_lazy_package_access_yields_the_same_classes():
     # identity, not the class name.
     assert lume_pyat.OrbitSolveError is OrbitSolveError
     assert lume_pyat.UnknownElementError is UnknownElementError
+    assert lume_pyat.AmbiguousElementError is AmbiguousElementError

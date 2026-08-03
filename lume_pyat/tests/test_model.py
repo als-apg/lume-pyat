@@ -1,16 +1,38 @@
 """LUMEPyATModel: construction, the frozen variable set, and atomic writes."""
 
-import at
+from typing import ClassVar
+
 import pytest
 from lume.exceptions import ReadOnlyError
 
 from lume_pyat.actions import PyATReadOnlyScalarVariable, PyATWritableScalarVariable
-from lume_pyat.exceptions import OrbitSolveError, UnknownElementError
+from lume_pyat.exceptions import (
+    AmbiguousElementError,
+    OrbitSolveError,
+    UnknownElementError,
+)
 from lume_pyat.model import LUMEPyATModel
 from lume_pyat.simulator import PyATSimulator
-from lume_pyat.tests.conftest import QUAD_K, build_test_ring
+from lume_pyat.tests.conftest import QUAD_K, build_test_ring, strip_monitors
 
 UNSTABLE_K = 3.0
+
+
+class BreakableMonitor(PyATReadOnlyScalarVariable):
+    """A monitor read that can be made to fail after the model is built.
+
+    For the rollback path that only opens once the solve has *succeeded*: the
+    model reads its outputs after solving, so a read failing there is the one
+    way a write gets rejected with the simulator's cached solve already
+    replaced.
+    """
+
+    broken: ClassVar[bool] = False
+
+    def _get(self, simulator):
+        if type(self).broken:
+            raise RuntimeError("monitor read failed")
+        return super()._get(simulator)
 
 
 def build_variables():
@@ -91,6 +113,59 @@ def test_construction_validates_every_element_name(simulator):
         LUMEPyATModel(simulator=simulator, action_variables=variables)
 
 
+def test_construction_rejects_an_element_name_more_than_one_element_carries(simulator):
+    # Every drift in the ring is named DRIFT. Binding that name addresses none
+    # of them in particular, and element lookup would quietly pick the last.
+    variables = build_variables()
+    variables.append(
+        PyATWritableScalarVariable(
+            name="drift_length",
+            element_name="DRIFT",
+            attribute="Length",
+            default_value=0.4,
+        )
+    )
+    with pytest.raises(AmbiguousElementError, match="lattice elements are named"):
+        LUMEPyATModel(simulator=simulator, action_variables=variables)
+
+
+def test_duplicate_names_are_no_obstacle_when_no_variable_binds_them(simulator):
+    # The same drifts, unaddressed: a model over this lattice is fine, and has
+    # to stay fine -- a ring whose drifts share one name is the normal case.
+    model = LUMEPyATModel(simulator=simulator, action_variables=build_variables())
+
+    assert sum(element.FamName == "DRIFT" for element in model.lattice) > 1
+    model.set({"quad": 1.05})
+    assert model.get("quad") == 1.05
+
+
+def test_construction_rejects_an_attribute_the_element_does_not_have(simulator):
+    # A typo'd attribute is a mistake in the *definition* of a variable, so it
+    # is caught when the variable set is adopted rather than at whichever
+    # later write happens to touch it. pyAT would otherwise accept the
+    # assignment onto a dead field: ignored by the solve, read back intact.
+    variables = build_variables()
+    variables.append(
+        PyATWritableScalarVariable(
+            name="typo", element_name="QUAD_F_01", attribute="Kk", default_value=1.0
+        )
+    )
+    with pytest.raises(AttributeError, match="'typo' declares attribute 'Kk'"):
+        LUMEPyATModel(simulator=simulator, action_variables=variables)
+
+
+def test_the_attribute_check_leaves_the_lattice_untouched(simulator):
+    variables = [
+        PyATWritableScalarVariable(
+            name="typo", element_name="QUAD_F_01", attribute="Kk", default_value=1.0
+        )
+    ]
+    with pytest.raises(AttributeError):
+        LUMEPyATModel(simulator=simulator, action_variables=variables)
+
+    assert not hasattr(simulator.element("QUAD_F_01"), "Kk")
+
+
 def test_construction_rejects_a_variable_that_binds_no_element(simulator):
     class Unbound(PyATWritableScalarVariable):
         element_name: str | None = None
@@ -124,15 +199,8 @@ def test_a_read_only_variable_bound_to_a_non_monitor_fails_at_construction(simul
 def test_a_writable_only_model_needs_no_monitors(test_ring):
     # Why the monitorless case is not an error: driving magnets and reading
     # setpoints back is a legitimate use with no monitors involved at all.
-    monitorless = at.Lattice(
-        [element for element in test_ring if not isinstance(element, at.Monitor)],
-        name="NO_MONITORS",
-        energy=test_ring.energy,
-        periodicity=1,
-    )
-    monitorless.disable_6d()
     model = LUMEPyATModel(
-        simulator=PyATSimulator(monitorless),
+        simulator=PyATSimulator(strip_monitors(test_ring)),
         action_variables=[
             PyATWritableScalarVariable(
                 name="quad",
@@ -352,6 +420,28 @@ def test_a_failing_variable_rolls_back_the_rest_of_its_batch(simulator, monkeypa
         model.set({"quad": 1.1, "sextupole": 2.0})
 
     assert simulator.element("QUAD_F_01").K == before
+
+
+def test_a_failure_after_the_solve_still_rolls_the_solve_back(simulator, monkeypatch):
+    # The one path where the lattice alone is not enough: the solve succeeds
+    # and replaces the simulator's cached reading, and only then does reading
+    # the outputs fail. Restoring the lattice without restoring the cache
+    # would leave last_solution describing an orbit the ring no longer has.
+    variables = build_variables()
+    variables.append(BreakableMonitor(name="flaky", element_name="BPM_02", axis="x"))
+    model = LUMEPyATModel(simulator=simulator, action_variables=variables)
+
+    kick_before = list(simulator.element("COR_H_03").KickAngle)
+    inputs_before = model.get(["quad", "corrector"])
+    solution_before = dict(simulator.last_solution)
+
+    monkeypatch.setattr(BreakableMonitor, "broken", True)
+    with pytest.raises(RuntimeError, match="monitor read failed"):
+        model.set({"corrector": 1e-4})
+
+    assert list(simulator.element("COR_H_03").KickAngle) == kick_before
+    assert model.get(["quad", "corrector"]) == inputs_before
+    assert simulator.last_solution == solution_before
 
 
 def test_a_successful_batch_commits(model, simulator):

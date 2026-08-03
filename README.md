@@ -23,6 +23,9 @@ that layer plugs in.
 pip install lume-pyat
 ```
 
+Until the first release reaches PyPI, install from source instead:
+`pip install git+https://github.com/als-apg/lume-pyat`.
+
 Requires Python 3.10 or newer.
 
 ## What it gives you
@@ -31,6 +34,10 @@ Requires Python 3.10 or newer.
   all. Every element the batch touches is snapshotted first, the whole batch is
   applied, the orbit is solved **once**, and only then is anything committed. A
   failure restores every snapshot, so a rejected write is a complete no-op.
+- **Bindings are checked where you declare them.** A variable naming an element
+  the lattice does not have, a name two elements share, or an attribute that
+  does not exist is rejected when the model is built — not at whichever later
+  write happens to touch it.
 - **Instability is an exception, not a NaN.** pyAT reports an unstable ring by
   returning non-finite values rather than raising. `solve_orbit` checks the
   one-turn matrix and closed orbit by value and raises `OrbitSolveError`, so a
@@ -167,13 +174,28 @@ the atomicity, the solve, the caching — keeps working unchanged.
 
 | Name | What it is |
 |------|-----------|
-| `PyATSimulator` | Owns one `at.Lattice`; `solve()`, `element()`, `element_index()`, `lattice`, `last_solution` |
+| `PyATSimulator` | Owns one `at.Lattice`; `solve()`, `element()`, `element_index()`, `unique_element_index()`, `lattice`, `last_solution`, and `snapshot_solution()`/`restore_solution()` for rolling a solve back |
 | `LUMEPyATModel` | `ActionModel` over a simulator; atomic `set()`, cached `get()`, batched `reset()` |
 | `PyATWritableScalarVariable` | Binds a name to one element attribute; the extension point |
 | `PyATReadOnlyScalarVariable` | One transverse coordinate of a monitor's reading |
 | `solve_orbit`, `monitor_xy` | Guarded 4D closed-orbit solve and its monitor readout |
 | `apply_misalignment` | dx/dy/roll element misalignment, ported from pySC |
-| `OrbitSolveError`, `UnknownElementError` | The exception contract |
+| `OrbitSolveError`, `UnknownElementError`, `AmbiguousElementError` | The exception contract |
+
+### What raises what
+
+Everything that can be settled when a variable is *declared* is settled then,
+so the write path raises only about the physics.
+
+| Exception | Raised when |
+|-----------|-------------|
+| `UnknownElementError` | A name does not reach an element of the lattice — a variable binding, a lookup, or a misalignment key |
+| `AmbiguousElementError` | A name reaches more than one, so it addresses neither: two monitors sharing a `FamName` (at `PyATSimulator`) or a variable binding a repeated name (at `LUMEPyATModel`). A subclass of `UnknownElementError` |
+| `AttributeError` | A variable declares an attribute its element does not have, caught when `LUMEPyATModel` adopts the variable |
+| `OrbitSolveError` | A solve cannot be trusted: a non-finite one-turn matrix, `\|trace\| >= 2` in either plane, or a non-finite closed orbit |
+
+Duplicate names are only a problem for names you address. A lattice whose
+drifts all share one name — most of them — is fine.
 
 ## Development
 
