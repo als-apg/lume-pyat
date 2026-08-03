@@ -10,12 +10,14 @@ import sys
 import pytest
 
 # Importing the package must not drag in the simulator, pyAT, the lume-base
-# model machinery, or HDF5. Consumers re-export these names on error paths and
-# from lightweight entry points.
-HEAVY_ROOTS = ("at", "lume", "h5py")
+# model machinery, HDF5, or numpy. Consumers re-export these names on error
+# paths and from lightweight entry points, and numpy belongs on the list for
+# the same reason as the rest: the top-level namespace resolves lazily, so
+# nothing heavier than the standard library has any business being imported.
+HEAVY_ROOTS = ("at", "h5py", "lume", "numpy")
 
-# The exceptions module is stricter still: not even numpy.
-STDLIB_ONLY_ROOTS = (*HEAVY_ROOTS, "numpy", "scipy")
+# The exceptions module carries the same bar, plus scipy for good measure.
+STDLIB_ONLY_ROOTS = (*HEAVY_ROOTS, "scipy")
 
 
 def imported_roots(statement: str, roots: tuple[str, ...]) -> list[str]:
@@ -61,7 +63,12 @@ def test_the_probe_detects_a_heavy_import():
         "at",
         "h5py",
         "lume",
+        "numpy",
     ]
     # The simulator reaches pyAT but not lume-base -- only the model and the
     # action variables depend on the contract layer.
-    assert imported_roots("import lume_pyat.simulator", HEAVY_ROOTS) == ["at", "h5py"]
+    assert imported_roots("import lume_pyat.simulator", HEAVY_ROOTS) == [
+        "at",
+        "h5py",
+        "numpy",
+    ]

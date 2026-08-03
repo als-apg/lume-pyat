@@ -41,8 +41,21 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
     :attr:`supported_variables` hand back the same object on every access,
     which callers may legitimately hold onto.
 
-    This class never raises ``SystemExit`` and never starts a thread. Whether
-    an unusable model should end the process is the caller's decision.
+    This class never raises ``SystemExit``: whether an unusable model should
+    end the process is the caller's decision, not this class's.
+
+    **Not thread-safe, by design.** Every operation is synchronous and this
+    class starts no threads, takes no locks, and does no I/O of its own. The
+    atomicity above is transactional, not concurrent: it guarantees that one
+    batch leaves no partial state behind, *not* that two batches may run at
+    once. Two threads writing through the same model would interleave their
+    snapshots and their lattice mutations, and the rollback would restore
+    whichever snapshot it happened to hold — so the "complete no-op" promise
+    does not survive concurrent use. The lattice underneath is a single
+    mutable object shared by every variable, which is what makes this
+    unavoidable rather than merely unimplemented. A caller that needs
+    concurrent access must serialise it, one model per lattice, outside this
+    class.
     """
 
     def __init__(

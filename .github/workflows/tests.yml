@@ -25,8 +25,25 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies and package
+        # --python pins the interpreter explicitly. Without it uv picks one by
+        # discovery, which happens to find the matrix version on PATH today
+        # but is not guaranteed to -- and if it ever stopped, every job would
+        # silently test the same interpreter and stay green.
         run: |
-          uv sync --extra dev --no-editable
+          uv sync --extra dev --no-editable --python "${{ matrix.python-version }}"
+      - name: Confirm the interpreter matches the matrix
+        # The pin above only requests a version; this proves we got it, so a
+        # degraded matrix fails loudly instead of passing four times over.
+        env:
+          EXPECTED: ${{ matrix.python-version }}
+        run: |
+          uv run --no-sync python -c "
+          import os, sys
+          expected = os.environ['EXPECTED']
+          actual = '.'.join(map(str, sys.version_info[:2]))
+          assert actual == expected, f'expected Python {expected}, got {actual}'
+          print(f'running on Python {sys.version.split()[0]}')
+          "
       - name: List Python package versions
         run: uv pip list
       - name: Run tests
@@ -48,7 +65,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
       - name: Install the package
-        run: uv sync --no-editable
+        run: uv sync --no-editable --python 3.12
       - name: Extract and run the example
         run: |
           uv run --no-sync python - <<'PY'

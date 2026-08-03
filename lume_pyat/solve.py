@@ -36,7 +36,12 @@ _TRACE_INSTABILITY_THRESHOLD = 2.0
 
 
 def _monitor_refpts(ring: at.Lattice) -> np.ndarray:
-    """Indices of every `at.Monitor` element in `ring`, selected by type."""
+    """Indices of every `at.Monitor` element in `ring`, selected by type.
+
+    A ring carrying no `at.Monitor` yields an empty array, and the functions
+    below then yield an empty result rather than raising -- see
+    :func:`solve_orbit` for why that is the contract.
+    """
     return np.array(
         [i for i, element in enumerate(ring) if isinstance(element, at.Monitor)]
     )
@@ -87,6 +92,16 @@ def solve_orbit(ring: at.Lattice) -> np.ndarray:
        y-block `m44[2,2] + m44[3,3]`) must both satisfy `|trace| < 2.0`.
     3. `find_orbit4`'s closed orbit at the monitor refpts must be entirely
        finite.
+
+    A ring with no `at.Monitor` elements is not an error here: the guards
+    still run against the one-turn matrix, and the result is an empty
+    `(0, 6)` array. That is deliberate. Whether a monitorless ring is a
+    mistake depends on what the caller wants -- driving magnets and reading
+    setpoints back needs no monitors at all -- so this function reports the
+    orbit at the monitors that exist rather than legislating how many there
+    should be. A caller that *does* expect readings finds out precisely:
+    binding a read-only variable to an element that is not a monitor raises
+    `UnknownElementError` naming that element, at model construction.
 
     Args:
         ring: A 4D-canonical `at.Lattice` (radiation/cavity disabled, e.g.

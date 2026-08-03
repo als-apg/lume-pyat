@@ -1,5 +1,6 @@
 """LUMEPyATModel: construction, the frozen variable set, and atomic writes."""
 
+import at
 import pytest
 from lume.exceptions import ReadOnlyError
 
@@ -101,6 +102,49 @@ def test_construction_rejects_a_variable_that_binds_no_element(simulator):
                 Unbound(name="odd", attribute="K", default_value=1.0),
             ],
         )
+
+
+def test_a_read_only_variable_bound_to_a_non_monitor_fails_at_construction(simulator):
+    # The counterpart to solve.py's monitorless contract: solve_orbit does not
+    # legislate how many monitors a ring should have, so this is where a
+    # caller who expects readings finds out that it will not get them. The
+    # element exists, so the element-name check passes -- the boot solve is
+    # what catches it, and the message names the element.
+    with pytest.raises(UnknownElementError, match="'QUAD_F_01' is not a monitor"):
+        LUMEPyATModel(
+            simulator=simulator,
+            action_variables=[
+                PyATReadOnlyScalarVariable(
+                    name="not_a_bpm", element_name="QUAD_F_01", axis="x"
+                )
+            ],
+        )
+
+
+def test_a_writable_only_model_needs_no_monitors(test_ring):
+    # Why the monitorless case is not an error: driving magnets and reading
+    # setpoints back is a legitimate use with no monitors involved at all.
+    monitorless = at.Lattice(
+        [element for element in test_ring if not isinstance(element, at.Monitor)],
+        name="NO_MONITORS",
+        energy=test_ring.energy,
+        periodicity=1,
+    )
+    monitorless.disable_6d()
+    model = LUMEPyATModel(
+        simulator=PyATSimulator(monitorless),
+        action_variables=[
+            PyATWritableScalarVariable(
+                name="quad",
+                element_name="QUAD_F_01",
+                attribute="K",
+                default_value=QUAD_K,
+            )
+        ],
+    )
+
+    model.set({"quad": 1.05})
+    assert model.get("quad") == 1.05
 
 
 def test_construction_does_not_write_defaults_to_the_lattice(simulator):
