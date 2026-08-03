@@ -32,3 +32,35 @@ jobs:
       - name: Run tests
         run: |
           uv run --no-sync pytest -q lume_pyat/tests
+
+  readme-example:
+    # The README's example is the package's front door. Running it here is what
+    # stops it drifting from the code it advertises.
+    name: README example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install the package
+        run: uv sync --no-editable
+      - name: Extract and run the example
+        run: |
+          uv run --no-sync python - <<'PY'
+          import pathlib
+          import re
+
+          readme = pathlib.Path("README.md").read_text()
+          _, _, after_heading = readme.partition("\n## Example\n")
+          match = re.search(r"^```python\n(.*?)^```", after_heading, re.M | re.S)
+          if match is None:
+              raise SystemExit("no python example found under the '## Example' heading")
+
+          exec(compile(match.group(1), "README.md", "exec"), {"__name__": "__main__"})
+          print("README example ran to completion")
+          PY
