@@ -192,6 +192,9 @@ so the write path raises only about the physics.
 | `UnknownElementError` | A name does not reach an element of the lattice — a variable binding, a lookup, or a misalignment key |
 | `AmbiguousElementError` | A name reaches more than one, so it addresses neither: two monitors sharing a `FamName` (at `PyATSimulator`) or a variable binding a repeated name (at `LUMEPyATModel`). A subclass of `UnknownElementError` |
 | `AttributeError` | A variable declares an attribute its element does not have, caught when `LUMEPyATModel` adopts the variable |
+| `TypeError` | A variable names no lattice element at all — it carries no `element_name`, so it is not a pyAT action variable — caught when `LUMEPyATModel` adopts it |
+| `ValueError` | A writable variable is declared without the `default_value` that `reset()` writes back to the lattice. Pydantic surfaces it as a `ValidationError`, which is a `ValueError` |
+| `ReadOnlyError` | `set()` is called on a read-only variable — an orbit reading is solved for, never written — or one is declared with `read_only=False`. lume-base raises it; it is a subclass of `TypeError` |
 | `OrbitSolveError` | A solve cannot be trusted: a non-finite one-turn matrix, `\|trace\| >= 2` in either plane, or a non-finite closed orbit |
 
 Duplicate names are only a problem for names you address. A lattice whose
