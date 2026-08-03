@@ -1,7 +1,8 @@
-"""Package-level guarantees: import lightness, the lazy surface, the test ring."""
+"""Package-level guarantees: the lazy surface and the shared test ring.
 
-import subprocess
-import sys
+Import weight is covered separately, in test_imports.py.
+"""
+
 from pathlib import Path
 
 import at
@@ -11,31 +12,17 @@ import pytest
 import lume_pyat
 from lume_pyat.tests.conftest import QUAD_K, build_test_ring
 
-# Importing lume_pyat must not drag in the simulator, the lume-base model
-# machinery, or HDF5 — error paths and lightweight consumers depend on it.
-HEAVY_ROOTS = ("at", "lume", "h5py")
-
-
-def test_import_does_not_pull_heavy_dependencies():
-    probe = (
-        "import sys, lume_pyat; "
-        f"roots = {HEAVY_ROOTS!r}; "
-        "print(','.join(sorted(m for m in sys.modules if m.split('.')[0] in roots)))"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", probe],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert result.stdout.strip() == ""
-
 
 def test_lazy_map_and_public_surface_agree():
     for module in lume_pyat._LAZY_NAMES.values():
         assert module.startswith("lume_pyat.")
     assert set(lume_pyat._LAZY_NAMES) | {"__version__"} == set(lume_pyat.__all__)
     assert lume_pyat.__all__ == sorted(lume_pyat.__all__)
+
+
+def test_every_public_name_resolves():
+    for name in lume_pyat.__all__:
+        assert getattr(lume_pyat, name) is not None
 
 
 def test_unknown_attribute_raises_attribute_error():
