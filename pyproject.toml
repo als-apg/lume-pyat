@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lume-pyat"
+dynamic = ["version"]
+description = "pyAT-specific implementation of LUMEModel classes for virtual accelerators"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Lawrence Berkeley National Laboratory"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    # Exact pin for 0.1.x: the model layer subclasses ActionModel and depends on
+    # its dispatch internals, which carry no stability guarantee yet.
+    "lume-base==0.5.0",
+    # 0.7.1 is the floor at which K aliases PolynomB[1] on the element classes.
+    "accelerator-toolbox>=0.7.1",
+    "numpy",
+]
+
+[project.urls]
+Homepage = "https://github.com/als-apg/lume-pyat"
+Repository = "https://github.com/als-apg/lume-pyat"
+Documentation = "https://github.com/als-apg/lume-pyat"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipykernel",
+    "pre-commit",
+]
+
+[tool.setuptools.packages.find]
+include = ["lume_pyat", "lume_pyat.*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+lume_pyat = ["py.typed"]
+
+[tool.setuptools_scm]
+version_file = "lume_pyat/_version.py"
+
+[tool.pytest.ini_options]
+testpaths = ["lume_pyat/tests"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
