@@ -1,5 +1,6 @@
 """Action variables: attribute binding, the default-value rule, read-only paths."""
 
+import at
 import pytest
 from lume.actions import (
     Action,
@@ -11,7 +12,12 @@ from lume.exceptions import ReadOnlyError
 from lume.variables import ScalarVariable
 from pydantic import ValidationError
 
-from lume_pyat.actions import PyATReadOnlyScalarVariable, PyATWritableScalarVariable
+from lume_pyat.actions import (
+    ElementBinding,
+    PyATLatticeScalarVariable,
+    PyATReadOnlyScalarVariable,
+    PyATWritableScalarVariable,
+)
 from lume_pyat.exceptions import OrbitSolveError, UnknownElementError
 from lume_pyat.simulator import PyATSimulator
 from lume_pyat.tests.conftest import QUAD_K
@@ -169,6 +175,213 @@ def test_a_writable_is_the_facility_extension_point(simulator):
 
     assert simulator.element("QUAD_F_01").K == pytest.approx(1.5)
     assert variable._get(simulator) == pytest.approx(150.0)
+
+
+# -- multi-element bindings ------------------------------------------------
+
+
+def pair(**overrides):
+    """A variable driving two quadrupoles from one setpoint, the second at half."""
+    kwargs = {
+        "name": "quad_pair",
+        "bindings": [
+            ElementBinding(element_name="QUAD_F_01", attribute="K", weight=1.0),
+            ElementBinding(element_name="QUAD_F_02", attribute="K", weight=0.5),
+        ],
+        "default_value": QUAD_K,
+    }
+    return PyATWritableScalarVariable(**(kwargs | overrides))
+
+
+def test_the_single_element_form_is_one_binding_with_unit_weight():
+    variable = writable(attribute="PolynomB", index=1)
+    assert variable.bindings == [
+        ElementBinding(
+            element_name="QUAD_F_01", attribute="PolynomB", index=1, weight=1.0
+        )
+    ]
+
+
+def test_the_single_element_form_and_bindings_are_exclusive():
+    with pytest.raises(ValidationError, match="either"):
+        PyATWritableScalarVariable(
+            name="both",
+            element_name="QUAD_F_01",
+            attribute="K",
+            bindings=[ElementBinding(element_name="QUAD_F_02", attribute="K")],
+            default_value=1.0,
+        )
+
+
+def test_a_variable_needs_at_least_one_binding():
+    with pytest.raises(ValidationError):
+        PyATWritableScalarVariable(name="unbound", bindings=[], default_value=1.0)
+
+
+def test_a_binding_rejects_a_misspelled_field():
+    # A binding is a plain record; a typo that pydantic silently dropped would
+    # bind the element at unit weight and nobody would know.
+    with pytest.raises(ValidationError, match="wieght"):
+        ElementBinding(element_name="QUAD_F_01", attribute="K", wieght=0.5)
+
+
+@pytest.mark.parametrize("weight", [0.0, float("nan"), float("inf")])
+def test_a_binding_needs_a_finite_nonzero_weight(weight):
+    # The read divides by it.
+    with pytest.raises(ValidationError, match="weight"):
+        ElementBinding(element_name="QUAD_F_01", attribute="K", weight=weight)
+
+
+def test_a_write_applies_value_times_weight_to_every_element(simulator):
+    pair()._set(simulator, 2.0)
+
+    assert simulator.element("QUAD_F_01").K == pytest.approx(2.0)
+    assert simulator.element("QUAD_F_02").K == pytest.approx(1.0)
+
+
+def test_a_read_is_the_first_elements_value_over_its_weight(simulator):
+    variable = pair(
+        bindings=[
+            ElementBinding(element_name="QUAD_F_01", attribute="K", weight=0.25),
+            ElementBinding(element_name="QUAD_F_02", attribute="K", weight=1.0),
+        ]
+    )
+    variable._set(simulator, 4.0)
+    assert simulator.element("QUAD_F_01").K == pytest.approx(1.0)
+    assert variable._get(simulator) == pytest.approx(4.0)
+
+    # Only the first element feeds the read.
+    simulator.element("QUAD_F_02").K = 99.0
+    assert variable._get(simulator) == pytest.approx(4.0)
+
+
+def test_a_kick_split_over_slices_reads_back_whole(simulator):
+    # The sliced-device case: one setpoint over n slices, each carrying 1/n
+    # of the kick, reading back as slice 1 times n.
+    slices = ["COR_H_01", "COR_H_02", "COR_H_03"]
+    variable = PyATWritableScalarVariable(
+        name="kick",
+        bindings=[
+            ElementBinding(
+                element_name=name, attribute="KickAngle", index=0, weight=1 / 3
+            )
+            for name in slices
+        ],
+        default_value=0.0,
+    )
+    variable._set(simulator, 3.0e-4)
+
+    for name in slices:
+        assert simulator.element(name).KickAngle[0] == pytest.approx(1.0e-4)
+    assert variable._get(simulator) == pytest.approx(3.0e-4)
+
+
+def test_a_write_checks_every_element_before_touching_any(simulator):
+    variable = pair(
+        bindings=[
+            ElementBinding(element_name="QUAD_F_01", attribute="K"),
+            ElementBinding(element_name="QUAD_F_02", attribute="Kk"),
+        ]
+    )
+    with pytest.raises(AttributeError, match="has no attribute 'Kk'"):
+        variable._set(simulator, 2.0)
+
+    assert simulator.element("QUAD_F_01").K == pytest.approx(QUAD_K)
+
+
+def test_snapshot_targets_cover_every_binding(simulator):
+    assert pair().snapshot_targets(simulator) == [
+        (simulator.element_index("QUAD_F_01"), "K"),
+        (simulator.element_index("QUAD_F_02"), "K"),
+    ]
+
+
+# -- the lattice-level kind ------------------------------------------------
+
+
+ENERGY = 1.0e9  # the test ring's energy, in eV
+
+
+def energy(**overrides):
+    kwargs = {"name": "energy", "default_value": ENERGY}
+    return PyATLatticeScalarVariable(**(kwargs | overrides))
+
+
+@pytest.fixture
+def simulator_6d(test_ring_6d):
+    return PyATSimulator(test_ring_6d)
+
+
+def cavities(ring):
+    return [element for element in ring if isinstance(element, at.RFCavity)]
+
+
+def test_the_lattice_kind_is_a_writable_scalar_variable():
+    assert isinstance(energy(), (Action, ScalarVariable))
+    assert isinstance(energy(), WritableActionMixin)
+    assert energy().read_only is False
+
+
+def test_the_lattice_kind_requires_a_default_value():
+    with pytest.raises(ValidationError, match="needs a float default_value"):
+        PyATLatticeScalarVariable(name="energy")
+
+
+def test_the_lattice_kind_binds_no_element():
+    # It is the ring, not an element, that this kind addresses.
+    assert not hasattr(energy(), "element_name")
+    assert not hasattr(energy(), "bindings")
+
+
+def test_the_lattice_kind_reads_the_ring_energy(simulator):
+    assert energy()._get(simulator) == pytest.approx(ENERGY)
+
+
+def test_the_lattice_kind_writes_the_ring_energy_and_every_cavity(simulator_6d):
+    ring = simulator_6d.lattice
+    assert len(cavities(ring)) == 1
+
+    energy()._set(simulator_6d, 1.1e9)
+
+    assert ring.energy == pytest.approx(1.1e9)
+    assert all(cavity.Energy == pytest.approx(1.1e9) for cavity in cavities(ring))
+    assert energy()._get(simulator_6d) == pytest.approx(1.1e9)
+
+
+def test_the_lattice_kind_works_on_a_ring_without_cavities(simulator):
+    energy()._set(simulator, 1.1e9)
+    assert simulator.lattice.energy == pytest.approx(1.1e9)
+
+
+def test_the_hook_receives_the_ring_and_the_written_value(simulator_6d):
+    seen = []
+
+    class Hooked(PyATLatticeScalarVariable):
+        def _after_write(self, ring, value):
+            seen.append((ring, value, ring.energy))
+
+    Hooked(name="energy", default_value=ENERGY)._set(simulator_6d, 1.1e9)
+
+    # Called once, with the live ring, after the energy has been written.
+    assert len(seen) == 1
+    ring, value, energy_at_call = seen[0]
+    assert ring is simulator_6d.lattice
+    assert value == 1.1e9
+    assert energy_at_call == pytest.approx(1.1e9)
+
+
+def test_the_lattice_kind_snapshots_the_ring_energy_and_every_cavity(simulator_6d):
+    ring = simulator_6d.lattice
+    cavity_index = ring.get_uint32_index(at.RFCavity)[0]
+
+    assert energy().snapshot_targets(simulator_6d) == [
+        (None, "energy"),
+        (int(cavity_index), "Energy"),
+    ]
+
+
+def test_the_lattice_kind_snapshots_only_the_ring_when_there_is_no_cavity(simulator):
+    assert energy().snapshot_targets(simulator) == [(None, "energy")]
 
 
 # -- read-only get ---------------------------------------------------------

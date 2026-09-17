@@ -51,6 +51,34 @@ def build_test_ring() -> at.Lattice:
     return ring
 
 
+# Harmonic number of the 6D ring's cavity. Any integer works; this one keeps
+# the RF frequency in the hundreds of MHz for a ring this size.
+HARMONIC_NUMBER = 32
+
+# Cavity voltage of the 6D ring, in volts. Radiation is off, so any positive
+# voltage gives a stable synchrotron motion; this one is a typical order of
+# magnitude for a small ring.
+RF_VOLTAGE = 1.0e6
+
+
+def build_test_ring_6d() -> at.Lattice:
+    """The same FODO ring with one RF cavity, solved in 6D.
+
+    The cavity is enabled and radiation is left off -- the configuration the
+    package supports for 6D rings. Its frequency is set to the ring's
+    revolution frequency times :data:`HARMONIC_NUMBER`, so the nominal orbit
+    sits on-momentum and is flat, exactly like the 4D ring's.
+    """
+    ring = build_test_ring()
+    frequency = HARMONIC_NUMBER * ring.get_revolution_frequency()
+    ring.insert(
+        0,
+        at.RFCavity("RF", 0.0, RF_VOLTAGE, frequency, HARMONIC_NUMBER, ring.energy),
+    )
+    ring.enable_6d(at.RFCavity)
+    return ring
+
+
 def strip_monitors(ring: at.Lattice) -> at.Lattice:
     """The same ring with every ``at.Monitor`` removed.
 
@@ -63,7 +91,12 @@ def strip_monitors(ring: at.Lattice) -> at.Lattice:
         energy=ring.energy,
         periodicity=1,
     )
-    monitorless.disable_6d()
+    # Keep the ring's dimensionality: a 6D ring stays 6D (cavity on, radiation
+    # off, as build_test_ring_6d sets it up), a 4D ring stays 4D.
+    if ring.is_6d:
+        monitorless.enable_6d(at.RFCavity)
+    else:
+        monitorless.disable_6d()
     return monitorless
 
 
@@ -71,3 +104,9 @@ def strip_monitors(ring: at.Lattice) -> at.Lattice:
 def test_ring() -> at.Lattice:
     """A fresh :func:`build_test_ring` lattice per test."""
     return build_test_ring()
+
+
+@pytest.fixture
+def test_ring_6d() -> at.Lattice:
+    """A fresh :func:`build_test_ring_6d` lattice per test."""
+    return build_test_ring_6d()

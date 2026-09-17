@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import shapes for type checkers only
     from lume_pyat.actions import (
+        ElementBinding,
+        PyATLatticeScalarVariable,
         PyATReadOnlyScalarVariable,
         PyATWritableScalarVariable,
     )
@@ -30,9 +32,11 @@ if TYPE_CHECKING:  # pragma: no cover - import shapes for type checkers only
 
 _LAZY_NAMES = {
     "AmbiguousElementError": "lume_pyat.exceptions",
+    "ElementBinding": "lume_pyat.actions",
     "ElementState": "lume_pyat.simulator",
     "LUMEPyATModel": "lume_pyat.model",
     "OrbitSolveError": "lume_pyat.exceptions",
+    "PyATLatticeScalarVariable": "lume_pyat.actions",
     "PyATReadOnlyScalarVariable": "lume_pyat.actions",
     "PyATSimulator": "lume_pyat.simulator",
     "PyATWritableScalarVariable": "lume_pyat.actions",
@@ -48,9 +52,11 @@ _LAZY_NAMES = {
 # even though every name behind it is resolved lazily.
 __all__ = [
     "AmbiguousElementError",
+    "ElementBinding",
     "ElementState",
     "LUMEPyATModel",
     "OrbitSolveError",
+    "PyATLatticeScalarVariable",
     "PyATReadOnlyScalarVariable",
     "PyATSimulator",
     "PyATWritableScalarVariable",

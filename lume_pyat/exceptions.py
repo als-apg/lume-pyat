@@ -15,15 +15,17 @@ class OrbitSolveError(Exception):
 
     This is the load-bearing safety semantic of solving a nonlinear ring: an
     unstable or destabilized magnet configuration presents as
-    NaN-without-exception — ``at.find_m44`` and ``at.find_orbit4`` emit an
-    ``at.AtWarning`` and return non-finite garbage rather than raising. A
-    caller that did not check would fail *open*, serving a garbage orbit to a
-    monitor readback instead of refusing to.
+    NaN-without-exception — ``at.find_m66`` and the orbit solvers emit an
+    ``at.AtWarning`` and return non-finite garbage rather than raising — or,
+    with a cavity in the ring, as a finite one-turn matrix whose eigenvalues
+    have left the unit circle. A caller that did not check would fail *open*,
+    serving a garbage orbit to a monitor readback instead of refusing to.
 
     :func:`lume_pyat.solve.solve_orbit` detects instability by value and
     raises this instead. It covers three guard conditions, checked in order: a
-    non-finite one-turn matrix, a transverse-plane one-turn trace with
-    ``|trace| >= 2.0``, or a non-finite closed orbit.
+    non-finite one-turn matrix, a one-turn eigenvalue with
+    ``|eigenvalue| > 1 + 1e-6`` in any of the three planes (the message names
+    the plane), or a non-finite closed orbit.
 
     Derives from :class:`Exception` rather than :class:`ValueError`: an
     unstable lattice is a failure of the solve, not a bad argument.
