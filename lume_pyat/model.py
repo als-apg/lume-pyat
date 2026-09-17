@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from lume.actions import ActionModel, ActionVariable, WritableActionMixin
 from lume.variables import Variable
 
+from lume_pyat.actions import ElementBinding, PyATLatticeScalarVariable
 from lume_pyat.exceptions import UnknownElementError
 from lume_pyat.simulator import PyATSimulator
 
@@ -16,9 +17,10 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = ["LUMEPyATModel"]
 
-# One entry per element attribute a batch will touch: where it lives, and what
-# it held before the batch started.
-_Snapshot = tuple[int, str, Any]
+# One entry per attribute a batch will touch: where it lives (an element
+# index, or None for the lattice itself), and what it held before the batch
+# started.
+_Snapshot = tuple[int | None, str, Any]
 
 
 class LUMEPyATModel(ActionModel[PyATSimulator]):
@@ -254,24 +256,55 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
     # -- internals ---------------------------------------------------------
 
     def _validate_binding(self, name: str, variable: Variable) -> None:
-        """Check one variable's binding against the lattice. See __init__."""
+        """Check one variable's bindings against the lattice. See __init__."""
+        if isinstance(variable, PyATLatticeScalarVariable):
+            # The lattice kind binds the ring, not an element. What can be
+            # wrong in its definition is a snapshot target -- a subclass
+            # declaring an attribute that does not exist -- and that is
+            # checked here for the same reason an element attribute is.
+            for index, attribute in variable.snapshot_targets(self.simulator):
+                target = self.lattice if index is None else self.lattice[index]
+                if not hasattr(target, attribute):
+                    where = "the lattice" if index is None else f"element {index}"
+                    raise AttributeError(
+                        f"variable {name!r} declares attribute {attribute!r} "
+                        f"as a snapshot target, which {where} does not have"
+                    )
+            return
+
+        bindings = getattr(variable, "bindings", None)
+        if bindings is not None:
+            for binding in bindings:
+                self._validate_element_binding(name, binding)
+            return
+
+        # Read-only variables name a monitor and no attribute; there is
+        # nothing to check for them here beyond the name, and the boot solve
+        # catches a non-monitor.
         element_name = getattr(variable, "element_name", None)
         if element_name is None:
             raise TypeError(
                 f"variable {name!r} binds no lattice element; "
                 "this model takes pyAT action variables"
             )
-        index = self.simulator.unique_element_index(element_name)
+        self.simulator.unique_element_index(element_name)
 
-        # Read-only variables name a monitor and no attribute; there is
-        # nothing to check for them here, and the boot solve catches a
-        # non-monitor.
-        attribute = getattr(variable, "attribute", None)
-        if attribute is not None and not hasattr(self.lattice[index], attribute):
+    def _validate_element_binding(self, name: str, binding: ElementBinding) -> None:
+        index = self.simulator.unique_element_index(binding.element_name)
+        element = self.lattice[index]
+        if not hasattr(element, binding.attribute):
             raise AttributeError(
-                f"variable {name!r} declares attribute {attribute!r}, which "
-                f"element {element_name!r} does not have"
+                f"variable {name!r} declares attribute {binding.attribute!r}, "
+                f"which element {binding.element_name!r} does not have"
             )
+        if binding.index is not None:
+            length = len(getattr(element, binding.attribute))
+            if not -length <= binding.index < length:
+                raise IndexError(
+                    f"variable {name!r} declares index {binding.index} into "
+                    f"{binding.attribute!r} of element {binding.element_name!r}, "
+                    f"which has {length} entries"
+                )
 
     def _declared_defaults(self) -> dict[str, float]:
         return {
@@ -301,26 +334,37 @@ class LUMEPyATModel(ActionModel[PyATSimulator]):
         return variable
 
     def _snapshot(self, variables: list[Variable]) -> list[_Snapshot]:
-        """Capture the declared attribute of every element the batch will touch.
+        """Capture every attribute the batch will touch, as the variables declare.
 
-        Snapshots are per *attribute*, not per index, so an indexed write is
-        covered by the whole sequence it writes into. Aliased names such as
-        ``K`` need no special handling: pyAT routes them onto their underlying
-        storage, so capturing and restoring the declared name restores exactly
-        what the write changed.
+        Each variable answers ``snapshot_targets`` with the ``(element index,
+        attribute)`` pairs its write reaches -- one per binding for an element
+        variable. Snapshots are per *attribute*, not per index, so an indexed
+        write is covered by the whole sequence it writes into. Aliased names
+        such as ``K`` need no special handling: pyAT routes them onto their
+        underlying storage, so capturing and restoring the declared name
+        restores exactly what the write changed.
         """
         snapshots: list[_Snapshot] = []
-        seen: set[tuple[int, str]] = set()
+        seen: set[tuple[int | None, str]] = set()
         for variable in variables:
-            index = self.simulator.element_index(variable.element_name)
-            key = (index, variable.attribute)
-            if key in seen:
-                continue
-            seen.add(key)
-            held = getattr(self.lattice[index], variable.attribute)
-            snapshots.append((index, variable.attribute, deepcopy(held)))
+            for index, attribute in variable.snapshot_targets(self.simulator):
+                key = (index, attribute)
+                if key in seen:
+                    continue
+                seen.add(key)
+                held = getattr(self._snapshot_target(index), attribute)
+                snapshots.append((index, attribute, deepcopy(held)))
         return snapshots
 
     def _restore(self, snapshots: list[_Snapshot]) -> None:
-        for index, attribute, value in snapshots:
-            setattr(self.lattice[index], attribute, value)
+        # Lattice-level targets first, then elements, each group in capture
+        # order. pyAT's Lattice.energy setter pushes the value onto every
+        # cavity, so restoring the ring last would overwrite a cavity that
+        # had already been put back at its own snapshot.
+        ordered = sorted(snapshots, key=lambda snapshot: snapshot[0] is not None)
+        for index, attribute, value in ordered:
+            setattr(self._snapshot_target(index), attribute, value)
+
+    def _snapshot_target(self, index: int | None) -> Any:
+        """The object a snapshot target names: an element, or the lattice."""
+        return self.lattice if index is None else self.lattice[index]

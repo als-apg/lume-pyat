@@ -202,7 +202,7 @@ def test_solve_reflects_lattice_mutations(simulator):
 
 def test_an_unstable_lattice_raises(simulator):
     destabilise(simulator.lattice)
-    with pytest.raises(OrbitSolveError, match="one-turn matrix unstable"):
+    with pytest.raises(OrbitSolveError, match="one-turn map unstable"):
         simulator.solve()
 
 
@@ -277,7 +277,7 @@ def test_a_monitorless_ring_solves_to_an_empty_reading(test_ring):
     assert simulator.last_solution == {}
 
     destabilise(simulator.lattice)
-    with pytest.raises(OrbitSolveError, match="one-turn matrix unstable"):
+    with pytest.raises(OrbitSolveError, match="one-turn map unstable"):
         simulator.solve()
 
 

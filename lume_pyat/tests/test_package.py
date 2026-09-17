@@ -25,6 +25,18 @@ def test_every_public_name_resolves():
         assert getattr(lume_pyat, name) is not None
 
 
+def test_the_binding_and_lattice_kinds_are_public():
+    # 0.2.0's additions: a consumer builds multi-element and lattice-level
+    # variables from the top-level namespace like every other kind.
+    assert "ElementBinding" in lume_pyat.__all__
+    assert "PyATLatticeScalarVariable" in lume_pyat.__all__
+    assert lume_pyat.ElementBinding is lume_pyat.actions.ElementBinding
+    assert (
+        lume_pyat.PyATLatticeScalarVariable
+        is lume_pyat.actions.PyATLatticeScalarVariable
+    )
+
+
 def test_unknown_attribute_raises_attribute_error():
     with pytest.raises(AttributeError, match="has no attribute 'nope'"):
         _ = lume_pyat.nope
