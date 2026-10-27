@@ -67,6 +67,49 @@ def test_a_4d_ring_is_solved_in_4d(test_ring):
     assert solve_orbit(test_ring).shape == (N_CELLS, 6)
 
 
+@pytest.mark.parametrize("ring_fixture", ["test_ring", "test_ring_6d"])
+def test_the_orbit_is_searched_once_and_guarded_by_the_matrix_find_m66_finds(
+    ring_fixture, request, monkeypatch
+):
+    # The guard reads the one-turn matrix about the orbit the solve found,
+    # which is the matrix find_m66 finds when it searches for the orbit
+    # itself, bit for bit; find_m66 is handed that orbit rather than
+    # searching for it a second time.
+    ring = request.getfixturevalue(ring_fixture)
+    kick = ring[ring.get_uint32_index("COR_H_01")[0]]
+    kick.KickAngle = [1.0e-4, 0.0]
+    expected_m66 = at.find_m66(ring.deepcopy())[0]
+    find_orbit_name = "find_orbit6" if ring.is_6d else "find_orbit4"
+    real_find_orbit = getattr(at, find_orbit_name)
+    expected_orbit = real_find_orbit(ring.deepcopy(), refpts=_monitor_refpts(ring))[1]
+
+    searched = []
+    guarded = []
+    real_find_m66 = at.find_m66
+
+    def recording_find_orbit(*args, **kwargs):
+        result = real_find_orbit(*args, **kwargs)
+        searched.append(result[0])
+        return result
+
+    def recording_find_m66(*args, **kwargs):
+        result = real_find_m66(*args, **kwargs)
+        guarded.append((kwargs.get("orbit"), result[0]))
+        return result
+
+    monkeypatch.setattr(at, find_orbit_name, recording_find_orbit)
+    monkeypatch.setattr(at, "find_m66", recording_find_m66)
+
+    orbit = solve_orbit(ring)
+
+    assert len(searched) == 1
+    assert len(guarded) == 1
+    handed, m66 = guarded[0]
+    assert handed is searched[0]
+    assert np.array_equal(m66, expected_m66)
+    assert np.array_equal(orbit, expected_orbit)
+
+
 def test_a_corrector_kick_moves_the_orbit(test_ring):
     assert np.abs(solve_orbit(test_ring)[:, 0]).max() == pytest.approx(0.0, abs=1e-12)
 
@@ -171,7 +214,7 @@ def test_the_eigenvalue_limit_is_one_plus_1e6(test_ring, monkeypatch, excess, tr
 
 def test_non_finite_closed_orbit_trips_the_last_guard(test_ring, monkeypatch):
     # This guard is defense in depth and cannot be provoked through the
-    # lattice alone: at.find_m66 solves the closed orbit internally, so any
+    # lattice alone: at.find_m66 differentiates about the closed orbit, so any
     # lattice that yields a non-finite orbit trips the first guard instead.
     # Patching the orbit solver is the only way to exercise it.
     def non_finite_orbit(ring, refpts=None, **kwargs):

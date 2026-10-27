@@ -124,12 +124,13 @@ def _eigenvalue_magnitude_per_plane(m66: np.ndarray) -> list[float]:
 def solve_orbit(ring: at.Lattice) -> np.ndarray:
     """Guarded closed-orbit solve at every `at.Monitor` refpt in `ring`.
 
-    Runs `at.find_m66` and then the orbit solver matching the ring's
-    dimensionality -- `at.find_orbit6` for a 6D ring (``ring.is_6d``, i.e. a
-    cavity is enabled), `at.find_orbit4` for a 4D one -- with pyAT's
-    `AtWarning` instability warnings suppressed (they are the expected shape
-    of the failure this function guards against, not information the caller
-    needs), then checks each result by value before trusting it:
+    Runs the orbit solver matching the ring's dimensionality --
+    `at.find_orbit6` for a 6D ring (``ring.is_6d``, i.e. a cavity is enabled),
+    `at.find_orbit4` for a 4D one -- and then `at.find_m66` about the orbit it
+    found, with pyAT's `AtWarning` instability warnings suppressed (they are
+    the expected shape of the failure this function guards against, not
+    information the caller needs), then checks each result by value before
+    trusting it:
 
     1. `find_m66`'s one-turn matrix must be entirely finite.
     2. Every eigenvalue of that matrix must satisfy
@@ -141,6 +142,11 @@ def solve_orbit(ring: at.Lattice) -> np.ndarray:
 
     The dispatch on ``ring.is_6d`` is not optional: pyAT refuses to solve a
     cavity-less ring in 6D and a ring with an enabled cavity in 4D.
+
+    The closed orbit is searched for once. `at.find_m66` left to itself runs
+    the same search, with the same solver and steps, before it differentiates
+    about the result, so handing it the orbit already found gives the same
+    matrix bit for bit at half the tracking.
 
     Rings with radiation enabled are out of scope. The guards would still
     run -- a damped map has its eigenvalues strictly inside the unit circle,
@@ -176,9 +182,11 @@ def solve_orbit(ring: at.Lattice) -> np.ndarray:
     """
     refpts = _monitor_refpts(ring)
 
+    find_orbit = at.find_orbit6 if ring.is_6d else at.find_orbit4
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=at.AtWarning)
-        m66 = at.find_m66(ring)[0]
+        orbit, orbit_at_monitors = find_orbit(ring, refpts=refpts)
+        m66 = at.find_m66(ring, orbit=orbit, keep_lattice=True)[0]
 
     if not np.all(np.isfinite(m66)):
         raise OrbitSolveError("find_m66 one-turn matrix has non-finite entries")
@@ -204,11 +212,6 @@ def solve_orbit(ring: at.Lattice) -> np.ndarray:
             f"{max(worst):.3e} (limit 1 + {_EIGENVALUE_TOLERANCE:.0e}); "
             f"per plane: {per_plane}"
         )
-
-    find_orbit = at.find_orbit6 if ring.is_6d else at.find_orbit4
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=at.AtWarning)
-        _, orbit_at_monitors = find_orbit(ring, refpts=refpts)
 
     if not np.all(np.isfinite(orbit_at_monitors)):
         raise OrbitSolveError(
